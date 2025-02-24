@@ -1,0 +1,8 @@
+datasets==3.3.0
+ipython==7.34.0
+matplotlib==3.10.0
+pandas==2.2.2
+peft==0.13.0
+torch==2.5.1+cu124
+tqdm==4.67.1
+transformers==4.44.0
