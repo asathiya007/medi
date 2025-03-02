@@ -156,8 +156,8 @@ class Medi:
                 encoder_hidden_size=1024)
         elif peft_type == 'LORA':
             peft_config = LoraConfig(
-                r=24,
-                lora_alpha=24,
+                r=28,
+                lora_alpha=28,
                 lora_dropout=0,
                 target_modules=['qkv_proj', 'down_proj'],
                 task_type='CAUSAL_LM')
