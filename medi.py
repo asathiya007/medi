@@ -4,6 +4,7 @@ import torch
 from tqdm import tqdm
 from copy import deepcopy
 from datasets import Dataset, load_dataset
+import transformers
 from transformers import TrainingArguments, Trainer, \
     DataCollatorForLanguageModeling, AutoTokenizer, \
     AutoModelForCausalLM
@@ -13,8 +14,10 @@ import logging
 import re
 
 
+# set environment variables and seed
 os.environ['WANDB_DISABLED'] = 'true'
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+SEED = 0
 
 
 class Medi:
@@ -74,17 +77,25 @@ class Medi:
             tok_inputs = self.tokenizer(
                 input_chat_msgs, return_tensors='pt',
                 max_length=self.max_input_tok_len,
-                padding='max_length')['input_ids']
+                padding='max_length')
+            tok_input_ids = tok_inputs['input_ids']
+            tok_input_attn_mask = tok_inputs['attention_mask']
             tok_outputs = self.tokenizer(
                 output_chat_msgs, return_tensors='pt',
                 max_length=self.max_output_tok_len,
                 padding='max_length')['input_ids']
         else:
             tok_inputs = self.tokenizer(
-                input_chat_msgs, return_tensors='pt')['input_ids']
+                input_chat_msgs, return_tensors='pt')
+            tok_input_ids = tok_inputs['input_ids']
+            tok_input_attn_mask = tok_inputs['attention_mask']
             tok_outputs = self.tokenizer(
                 output_chat_msgs, return_tensors='pt')['input_ids']
-        return {'input_ids': tok_inputs, 'labels': tok_outputs}
+        return {
+            'input_ids': tok_input_ids,
+            'attention_mask': tok_input_attn_mask,
+            'labels': tok_outputs
+        }
 
     def dataset_generator(self):
         dataset = load_dataset(
@@ -126,6 +137,10 @@ class Medi:
 
     def train(self, peft_type=None, num_epochs=5, test_size=0.2,
               batch_size=4, grad_accumulation_steps=1):
+        transformers.enable_full_determinism(SEED)
+
+        # remove previous output directory (new one will be created when saving
+        # PEFT weights and tokenizer)
         if os.path.isdir(self.output_dir):
             shutil.rmtree(self.output_dir)
 
@@ -148,17 +163,15 @@ class Medi:
             peft_config = PromptEncoderConfig(
                 peft_type=peft_type,
                 task_type='CAUSAL_LM',
-                num_virtual_tokens=32,
+                num_virtual_tokens=4,
                 token_dim=3072,
-                encoder_dropout=0.1,
-                encoder_num_layers=3,
-                encoder_reparameterization_type='LSTM',
-                encoder_hidden_size=1024)
+                encoder_num_layers=2,
+                encoder_reparameterization_type='MLP',
+                encoder_hidden_size=256)
         elif peft_type == 'LORA':
             peft_config = LoraConfig(
-                r=28,
-                lora_alpha=28,
-                lora_dropout=0,
+                r=2,
+                lora_alpha=2,
                 target_modules=['qkv_proj', 'down_proj'],
                 task_type='CAUSAL_LM')
         else:
@@ -172,15 +185,16 @@ class Medi:
         self.logger.info(f'Fine-tuning model (PEFT type: {peft_type})...')
         training_args = TrainingArguments(
             output_dir=self.output_dir,
-            # due to gradient calculation and backpropagation, training
-            # requires more GPU memory than evalution, so gradient accumulation
-            # is used for training and a larger batch size is used for
-            # evaluation
+            seed=SEED,
+            # training requires more GPU memory than evaluation (for storing
+            # gradients and optimizer states), so a smaller batch size with 
+            # gradient accumulation is used for training and a larger batch size
+            # is used for evaluation
             per_device_train_batch_size=batch_size,
             per_device_eval_batch_size=batch_size * grad_accumulation_steps,
             gradient_accumulation_steps=grad_accumulation_steps,
             num_train_epochs=num_epochs,
-            evaluation_strategy='epoch',
+            eval_strategy='epoch',
             save_strategy='epoch',
             # only save the latest checkpoint, to save space on disk
             save_total_limit=1,
@@ -206,7 +220,7 @@ class Medi:
         self.model.save_pretrained(self.output_dir)
         self.tokenizer.save_pretrained(self.output_dir)
         self.logger.info(
-            'Saved fine-tuned model and tokenizer to '
+            'Saved PEFT weights and tokenizer to '
             + f'{os.path.abspath(self.output_dir)}')
         regex = re.compile(r'^checkpoint-.*')
         for dir_name in os.listdir(self.output_dir):
@@ -220,6 +234,7 @@ class Medi:
             self.model = self.model.merge_and_unload()
 
     def inference(self, questions):
+        transformers.enable_full_determinism(SEED)
         input_chats = list(map(
             lambda q: [
                 {'role': 'system', 'content': self.system_context},
@@ -255,7 +270,7 @@ class Medi:
         self.model = PeftModel.from_pretrained(model, self.output_dir)
         self.model = self.model.to(self.device)
         self.logger.info(
-            'Loaded fine-tuned model and tokenizer from '
+            'Loaded PEFT weights and tokenizer from '
             + f'{os.path.abspath(self.output_dir)}')
 
         # if trained model has PEFT type LORA, merge weights for faster
