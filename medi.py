@@ -165,7 +165,6 @@ class Medi:
                 task_type='CAUSAL_LM',
                 num_virtual_tokens=4,
                 token_dim=3072,
-                encoder_num_layers=2,
                 encoder_reparameterization_type='MLP',
                 encoder_hidden_size=256)
         elif peft_type == 'LORA':
