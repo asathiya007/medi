@@ -163,20 +163,20 @@ class Medi:
             peft_config = PromptEncoderConfig(
                 peft_type=peft_type,
                 task_type='CAUSAL_LM',
-                num_virtual_tokens=4,
+                num_virtual_tokens=8,
                 token_dim=3072,
                 encoder_reparameterization_type='MLP',
                 encoder_hidden_size=256)
         elif peft_type == 'LORA':
             peft_config = LoraConfig(
-                r=2,
+                r=14,
                 lora_alpha=2,
+                init_lora_weights='gaussian',
                 target_modules=['qkv_proj', 'down_proj'],
                 task_type='CAUSAL_LM')
         else:
             raise Exception(
                 'Invalid PEFT type. Expected one of: P_TUNING, LORA')
-        self.model.enable_input_require_grads()
         self.model = get_peft_model(self.model, peft_config)
         self.model.print_trainable_parameters()
 
@@ -209,7 +209,6 @@ class Medi:
             args=training_args,
             train_dataset=self.tokenized_dataset['train'],
             eval_dataset=self.tokenized_dataset['test'],
-            tokenizer=self.tokenizer,
             data_collator=data_collator
         )
         trainer.train()
